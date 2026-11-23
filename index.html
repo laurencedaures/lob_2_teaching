@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two-Venue Order Book Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: header + key figures + arbitrage banner, then two exchange books and the trading panel, then orders / exercises / log */
+:root{
+  --bg:#f2f4f1; --panel:#ffffff; --ink:#15202a; --muted:#5b6a76; --line:#dde2df;
+  --bid:#0e7a5c; --bid-bg:rgba(14,122,92,.15); --ask:#bf3f2e; --ask-bg:rgba(191,63,46,.14);
+  --accent:#2a4bd1; --accent-ink:#ffffff; --you:#d99a00; --you-bg:rgba(217,154,0,.18);
+  --va:#2a4bd1; --vb:#7b3fc4;
+  --font-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1418; --panel:#162027; --ink:#e6edf0; --muted:#8fa1ac; --line:#26353f;
+    --bid:#3fcf9f; --bid-bg:rgba(63,207,159,.18); --ask:#f2715f; --ask-bg:rgba(242,113,95,.18);
+    --accent:#8ba3ff; --accent-ink:#0e1418; --you:#f2c14e; --you-bg:rgba(242,193,78,.18);
+    --va:#8ba3ff; --vb:#c39bff; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1418; --panel:#162027; --ink:#e6edf0; --muted:#8fa1ac; --line:#26353f;
+  --bid:#3fcf9f; --bid-bg:rgba(63,207,159,.18); --ask:#f2715f; --ask-bg:rgba(242,113,95,.18);
+  --accent:#8ba3ff; --accent-ink:#0e1418; --you:#f2c14e; --you-bg:rgba(242,193,78,.18);
+  --va:#8ba3ff; --vb:#c39bff; color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.45}
+.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+h1,h2,h3{margin:0;text-wrap:balance}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.wrap{max-width:1320px;margin:0 auto;padding:18px 16px 40px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between}
+header h1{font-size:26px;font-weight:600;letter-spacing:-.01em}
+header p{margin:4px 0 0;color:var(--muted);max-width:68ch}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.controls label{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px}
+.controls input[type=range]{width:100px;accent-color:var(--accent)}
+.controls select{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:6px 8px}
+.btn{border:1px solid var(--line);background:var(--panel);padding:7px 12px;border-radius:6px;cursor:pointer;font-weight:500}
+.btn:hover:not(:disabled){border-color:var(--muted)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.stat{background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.stat span.l{font-size:12px;color:var(--muted)}
+.stat b{font-family:var(--font-mono);font-weight:600;font-size:18px;font-variant-numeric:tabular-nums}
+.stat b.pos{color:var(--bid)} .stat b.neg{color:var(--ask)}
+
+/* Arbitrage banner */
+.arb{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;justify-content:space-between;background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--muted);border-radius:8px;padding:12px 14px}
+.arb.on{border-color:var(--you);border-left-color:var(--you);background:var(--you-bg)}
+.arbtxt{flex:1 1 360px;font-size:14px}
+.arbtxt .sub{display:block;color:var(--muted);font-size:12.5px;margin-top:3px}
+.arbact{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+.arbact .field{width:90px}
+.chk{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted)}
+
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr);gap:14px;align-items:start}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+@media (max-width:1100px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.grid>.col{grid-column:1/-1}.grid2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media (max-width:700px){.grid,.grid2{grid-template-columns:minmax(0,1fr)}}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card h2{font-size:15px;font-weight:600;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.card h2 small{font-weight:400;color:var(--muted);font-size:12px}
+.vtag{display:inline-block;min-width:22px;text-align:center;border-radius:4px;color:#fff;font-weight:600;font-size:12px;padding:1px 6px;font-family:var(--font-mono)}
+.vtag.A{background:var(--va)} .vtag.B{background:var(--vb)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .vtag{color:#0b1114}}
+:root[data-theme="dark"] .vtag{color:#0b1114}
+.venue.A{border-top:3px solid var(--va)} .venue.B{border-top:3px solid var(--vb)}
+
+/* Books */
+.lvhead,.lv{display:grid;grid-template-columns:68px 1fr 1fr 40px;gap:4px;align-items:center;padding:0 6px}
+.lvhead{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.lvhead span:nth-child(n+2),.lv span:nth-child(n+3){text-align:right}
+.lv{position:relative;width:100%;height:26px;border:0;background:transparent;text-align:left;cursor:pointer;font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;border-radius:3px}
+.lv:hover{background:color-mix(in srgb,var(--muted) 12%,transparent)}
+.lv .bar{position:absolute;right:0;top:3px;bottom:3px;border-radius:2px;pointer-events:none}
+.lv.ask .bar{background:var(--ask-bg)} .lv.bid .bar{background:var(--bid-bg)}
+.lv > span{position:relative}
+.lv.ask .px{color:var(--ask);font-weight:600} .lv.bid .px{color:var(--bid);font-weight:600}
+.lv.empty .px{opacity:.45;font-weight:400}
+.lv.arbhi{outline:2px solid var(--you);outline-offset:-2px;background:var(--you-bg)}
+.lv .mine:not(:empty){background:var(--you);color:#1b1500;border-radius:3px;padding:0 4px;font-size:11px;font-weight:600;justify-self:start;line-height:17px;white-space:nowrap}
+.lv .x{margin-left:5px;cursor:pointer;font-weight:700;padding:0 2px;border-radius:2px}
+.lv .x:hover{background:rgba(0,0,0,.2)}
+.lv .n{color:var(--muted)}
+.spread{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:6px 8px;margin:4px 0;border-block:1px dashed var(--muted);font-size:12.5px;color:var(--muted)}
+.spread b{color:var(--ink);font-family:var(--font-mono);font-weight:600}
+.offview{font-size:12.5px;background:var(--you-bg);border-left:3px solid var(--you);padding:6px 8px;border-radius:0 5px 5px 0;margin-top:6px}
+.offview[hidden]{display:none}
+.hint{font-size:12.5px;color:var(--muted);margin:0}
+
+/* Ticket & toolkit */
+.seg{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:8px;cursor:pointer;font-weight:500}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+.seg.side button[aria-pressed=true][data-v=buy]{background:var(--bid);color:#fff}
+.seg.side button[aria-pressed=true][data-v=sell]{background:var(--ask);color:#fff}
+.seg.ven button[aria-pressed=true][data-v=A]{background:var(--va)} .seg.ven button[aria-pressed=true][data-v=B]{background:var(--vb)}
+.seg.ven button[aria-pressed=true]{color:#fff}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .seg button[aria-pressed=true]{color:#0b1114}}
+:root[data-theme="dark"] .seg button[aria-pressed=true]{color:#0b1114}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--muted)}
+.field input,.field select{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:8px 10px;font-family:var(--font-mono);font-size:15px;width:100%}
+.field input:disabled{opacity:.5}
+.preview{background:var(--bg);border-left:3px solid var(--accent);padding:8px 10px;border-radius:0 6px 6px 0;font-size:13px;min-height:58px}
+.err{color:var(--ask);font-size:13px;min-height:18px;margin:0}
+.submit{padding:10px;font-weight:600;border-radius:6px;border:0;cursor:pointer;color:#fff}
+.submit.buy{background:var(--bid)} .submit.sell{background:var(--ask)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .submit{color:#0b1114}}
+:root[data-theme="dark"] .submit{color:#0b1114}
+.stack{display:flex;flex-direction:column;gap:10px}
+.row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+
+/* Orders */
+.mo{display:grid;grid-template-columns:24px 44px 1fr auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.mo:last-child{border-bottom:0}
+.mo .s.buy{color:var(--bid);font-weight:600} .mo .s.sell{color:var(--ask);font-weight:600}
+.mo .ahead{grid-column:3/4;color:var(--muted);font-size:12px}
+.mo button{border:1px solid var(--line);background:transparent;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:12px}
+.mo button:hover{border-color:var(--ask);color:var(--ask)}
+.empty-note{color:var(--muted);font-size:13px;margin:0}
+
+/* Exercises */
+.missions{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.missions li{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:start}
+.missions .ck{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);margin-top:1px;display:grid;place-items:center;font-size:12px;color:transparent}
+.missions li.done .ck{background:var(--bid);border-color:var(--bid);color:#fff}
+.missions li.done b{text-decoration:line-through;text-decoration-color:var(--muted);color:var(--muted)}
+.missions b{font-weight:600;display:block;font-size:14px}
+.missions .tag{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-right:6px}
+.missions span.d{font-size:12.5px;color:var(--muted)}
+
+/* Log & tape */
+.log{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto;padding-right:4px}
+.log div{font-size:13px;padding:6px 8px;border-radius:5px;background:var(--bg);border-left:3px solid var(--muted)}
+.log div.fill{border-color:var(--you)} .log div.ok{border-color:var(--accent)} .log div.warn{border-color:var(--ask)}
+.tape{font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;max-height:230px;overflow:auto}
+.tp{display:grid;grid-template-columns:38px 26px 1fr 1fr;gap:6px;padding:2px 4px}
+.tp span:nth-child(n+3){text-align:right}
+.tp .t{color:var(--muted)}
+.tp.buy .p{color:var(--bid)} .tp.sell .p{color:var(--ask)}
+
+/* Comparison table */
+.cmp{width:100%;border-collapse:collapse;font-size:13.5px}
+.cmp th,.cmp td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.cmp th{font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.cmp td:first-child{font-weight:600;white-space:nowrap}
+.tscroll{overflow-x:auto}
+.lexique dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px 24px;margin:0}
+.lexique dt{font-weight:600} .lexique dd{margin:2px 0 0;color:var(--muted);font-size:13.5px}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Two-Venue Order Book Lab</h1>
+      <p>The same asset trades on two exchanges, each with its own limit order book. Bots keep both books alive. Quote both sides as a market maker, or hunt price gaps between the exchanges as an arbitrageur.</p>
+    </div>
+    <div class="controls">
+      <button class="btn" id="pause" type="button">Pause market</button>
+      <button class="btn" id="step" type="button">Next event</button>
+      <label for="speed">Speed <input id="speed" type="range" min="1" max="10" value="3"></label>
+      <label for="arbBots">Arbitrageur bots
+        <select id="arbBots">
+          <option value="0">Off</option>
+          <option value="0.15" selected>Low</option>
+          <option value="0.5">Medium</option>
+          <option value="1">High</option>
+        </select>
+      </label>
+      <button class="btn" id="reset" type="button">Reset</button>
+    </div>
+  </header>
+
+  <section class="stats" aria-label="Key figures">
+    <div class="stat"><span class="l">Net position (A + B)</span><b id="sPos">0</b></div>
+    <div class="stat"><span class="l">Total P&amp;L</span><b id="sTot">$0.00</b></div>
+    <div class="stat"><span class="l">Realized P&amp;L</span><b id="sReal">$0.00</b></div>
+    <div class="stat"><span class="l">Open-position P&amp;L</span><b id="sInv">$0.00</b></div>
+    <div class="stat"><span class="l">Arbitrage profit locked</span><b id="sArb">$0.00</b></div>
+    <div class="stat"><span class="l">Maker / taker volume</span><b id="sMT">0 / 0</b></div>
+  </section>
+
+  <section class="arb" id="arb" aria-live="polite">
+    <div class="arbtxt" id="arbTxt"></div>
+    <div class="arbact">
+      <label class="field" for="arbQ">Size<input id="arbQ" type="number" min="1" step="10" value="30"></label>
+      <label class="chk" for="arbLat"><input type="checkbox" id="arbLat"> Add latency between the two legs</label>
+      <button class="btn primary" id="arbGo" type="button">Take arbitrage</button>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card venue A" id="vA" data-v="A" aria-labelledby="hA">
+      <h2 id="hA"><span><span class="vtag A">A</span> Exchange A</span><small>click a price to use it as your limit price</small></h2>
+      <div>
+        <div class="lvhead"><span>Yours</span><span>Price</span><span>Size</span><span>Ord.</span></div>
+        <div class="asks"></div>
+        <div class="spread"></div>
+        <div class="bids"></div>
+        <div class="offview" hidden></div>
+      </div>
+    </section>
+    <section class="card venue B" id="vB" data-v="B" aria-labelledby="hB">
+      <h2 id="hB"><span><span class="vtag B">B</span> Exchange B</span><small>click a price to use it as your limit price</small></h2>
+      <div>
+        <div class="lvhead"><span>Yours</span><span>Price</span><span>Size</span><span>Ord.</span></div>
+        <div class="asks"></div>
+        <div class="spread"></div>
+        <div class="bids"></div>
+        <div class="offview" hidden></div>
+      </div>
+    </section>
+
+    <div class="col">
+      <section class="card" aria-labelledby="hTicket">
+        <h2 id="hTicket">Place an order</h2>
+        <form id="ticket" novalidate>
+          <div class="stack">
+            <div class="seg ven" role="group" aria-label="Exchange">
+              <button type="button" data-v="A" aria-pressed="true">Exchange A</button>
+              <button type="button" data-v="B" aria-pressed="false">Exchange B</button>
+            </div>
+            <div class="seg side" role="group" aria-label="Side">
+              <button type="button" data-v="buy" aria-pressed="true">Buy</button>
+              <button type="button" data-v="sell" aria-pressed="false">Sell</button>
+            </div>
+            <div class="seg type" role="group" aria-label="Order type">
+              <button type="button" data-v="limit" aria-pressed="true">Limit order</button>
+              <button type="button" data-v="market" aria-pressed="false">Market order</button>
+            </div>
+            <div class="fields">
+              <label class="field" for="price">Limit price ($)<input id="price" type="number" step="0.01" min="0.01" inputmode="decimal"></label>
+              <label class="field" for="qty">Quantity<input id="qty" type="number" step="10" min="1" value="50" inputmode="numeric"></label>
+            </div>
+            <div class="preview" id="preview" aria-live="polite"></div>
+            <p class="err" id="err" role="alert"></p>
+            <button class="submit buy" id="send" type="submit">Send buy order</button>
+            <button class="btn" id="flat" type="button">Close position</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="hMine">
+        <h2 id="hMine">Your resting orders <span id="mineN"></span> <button class="btn" id="cancelAll" type="button" style="padding:3px 9px;font-size:12px">Cancel all</button></h2>
+        <div id="mine"></div>
+      </section>
+
+      <section class="card" aria-labelledby="hMM">
+        <h2 id="hMM">Market-maker toolkit <small>quote both sides</small></h2>
+        <div class="stack">
+          <div class="row2">
+            <label class="field" for="mmV">Exchange<select id="mmV"><option value="A">A</option><option value="B">B</option></select></label>
+            <label class="field" for="mmH">Half-spread (ticks)<input id="mmH" type="number" min="1" step="1" value="1"></label>
+            <label class="field" for="mmQ">Size per side<input id="mmQ" type="number" min="1" step="10" value="50"></label>
+          </div>
+          <button class="btn primary" id="mmGo" type="button">Quote both sides</button>
+          <button class="btn" id="mmCancel" type="button">Pull my quotes on this exchange</button>
+          <p class="hint">Posts a bid below and an ask above the mid price, replacing your resting orders on that exchange. If both fill, you keep the gap between them.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="col">
+      <section class="card" aria-labelledby="hMis">
+        <h2 id="hMis">Exercises <small id="misCount">0 / 5</small></h2>
+        <ul class="missions" id="missions"></ul>
+      </section>
+    </div>
+    <div class="col">
+      <section class="card" aria-labelledby="hLog">
+        <h2 id="hLog">Your order log</h2>
+        <div class="log" id="log" aria-live="polite"></div>
+      </section>
+      <section class="card" aria-labelledby="hTape">
+        <h2 id="hTape">Trades on both exchanges</h2>
+        <div class="tape">
+          <div class="tp" style="color:var(--muted);font-size:11px;text-transform:uppercase"><span>#</span><span>Ex</span><span>Price</span><span>Size</span></div>
+          <div id="tape"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="card" aria-labelledby="hCmp">
+    <h2 id="hCmp">Market making vs arbitrage</h2>
+    <div class="tscroll">
+      <table class="cmp">
+        <thead><tr><th></th><th>Market maker</th><th>Arbitrageur</th></tr></thead>
+        <tbody>
+          <tr><td>What you do</td><td>Post limit orders on both sides of one book and wait to be hit.</td><td>Spot a price gap between two books and trade both at once.</td></tr>
+          <tr><td>Role in the book</td><td>Maker: supplies liquidity.</td><td>Taker: consumes liquidity on both legs.</td></tr>
+          <tr><td>Where profit comes from</td><td>The bid-ask spread, earned many times in small amounts.</td><td>The gap itself: buy low on one exchange, sell high on the other.</td></tr>
+          <tr><td>Main risk</td><td>Inventory risk: only one side fills and the price moves against your position.</td><td>Leg risk: one leg fills, the other does not, or fills at a worse price.</td></tr>
+          <tr><td>What it needs</td><td>Patience, a sensible spread, control of inventory.</td><td>Speed. The opportunity disappears as soon as others act on it.</td></tr>
+          <tr><td>Effect on the market</td><td>Narrows spreads and deepens the book.</td><td>Pulls prices on the two exchanges back together.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card lexique" aria-labelledby="hLex">
+    <h2 id="hLex">Glossary</h2>
+    <dl>
+      <div><dt>Limit order book (LOB)</dt><dd>The list of all resting limit orders on one exchange, sorted by price.</dd></div>
+      <div><dt>Price-time priority</dt><dd>The best price is served first. At the same price, the earliest order is served first.</dd></div>
+      <div><dt>Spread</dt><dd>The gap between the best ask and the best bid of one exchange.</dd></div>
+      <div><dt>Maker / taker</dt><dd>The maker posts a resting order. The taker crosses the book and trades against it.</dd></div>
+      <div><dt>Realized P&amp;L</dt><dd>Profit from matched buys and sells: the spread you captured or the gap you locked in.</dd></div>
+      <div><dt>Open-position P&amp;L</dt><dd>Gain or loss on the inventory you still hold, valued at the current mid price.</dd></div>
+      <div><dt>Cross-venue arbitrage</dt><dd>Exists when one exchange's best bid is higher than the other's best ask. Buying on one and selling on the other locks the difference.</dd></div>
+      <div><dt>Leg risk</dt><dd>Risk that the second trade of an arbitrage is filled late or at a worse price, so the profit shrinks or turns into a loss.</dd></div>
+    </dl>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const YOU = 'you', BOT = 'bot', N = 7, VEN = ['A', 'B'], LATENCY = 900;
+  const $ = id => document.getElementById(id);
+  const P = c => (c / 100).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const P3 = c => (c / 100).toLocaleString('en-US', {minimumFractionDigits: 3, maximumFractionDigits: 3});
+  const E = c => (c < 0 ? '-' : '') + '$' + P(Math.abs(c));
+  const SG = c => (c > 0 ? '+' : '') + E(c);
+  const plural = (n, s, p) => n > 1 ? p : s;
+  const VN = v => 'Exchange ' + v;
+
+  let books, orders, seq, nextId, tradeN, st, acc, journal, tape, done, timer, paused = false;
+  let fair, off, lastTaker, arbProfit, arbCount, pendingArb, timeouts = [], arbRate = 0.15;
+  let venue = 'A', side = 'buy', type = 'limit';
+
+  const MISSIONS = [
+    {id: 'mm1', k: 'Market making', t: 'Quote both sides', d: 'Use the market-maker toolkit so that a bid and an ask of yours rest on the same exchange.'},
+    {id: 'mm2', k: 'Market making', t: 'Earn the spread', d: 'Keep quoting until both your bid and your ask have been hit, and your realized P&L turns positive.'},
+    {id: 'mm3', k: 'Market making', t: 'Meet inventory risk', d: 'Keep quoting until the market fills only one side and your net position reaches 100 units or more. Watch your open-position P&L follow the price, then close the position with the Close position button.'},
+    {id: 'a1', k: 'Arbitrage', t: 'Capture an arbitrage', d: 'Wait for the yellow banner, then press Take arbitrage. You can also do it by hand: buy on one exchange and sell on the other within a few seconds.'},
+    {id: 'a2', k: 'Arbitrage', t: 'Feel leg risk', d: 'Tick "Add latency between the two legs" and take an arbitrage. Compare the profit you expected with what you got.'}
+  ];
+
+  /* ---------- Engine ---------- */
+  const rq = (a = 10, b = 100) => a + 10 * Math.floor(Math.random() * ((b - a) / 10 + 1));
+  const geom = p => { let g = 0; while (Math.random() > p && g < 10) g++; return g; };
+  const randn = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+  const dirOf = o => books[o.venue][o.side === 'buy' ? 'bid' : 'ask'];
+  const refOf = v => Math.max(200, Math.round(fair + off[v]));
+
+  function best(v, s) {
+    let b = null;
+    for (const p of books[v][s].keys()) if (b === null || (s === 'ask' ? p < b : p > b)) b = p;
+    return b;
+  }
+  function topQty(v, s) {
+    const p = best(v, s);
+    return p === null ? 0 : books[v][s].get(p).reduce((a, o) => a + o.rem, 0);
+  }
+  function mid(v) {
+    const bb = best(v, 'bid'), ba = best(v, 'ask');
+    return bb !== null && ba !== null ? (bb + ba) / 2 : null;
+  }
+  function levels(v, s) {
+    const arr = [];
+    for (const [price, q] of books[v][s]) {
+      let qty = 0, mine = 0;
+      for (const o of q) { qty += o.rem; if (o.owner === YOU) mine += o.rem; }
+      arr.push({price, qty, n: q.length, mine});
+    }
+    arr.sort((a, b) => s === 'ask' ? a.price - b.price : b.price - a.price);
+    return arr;
+  }
+  function queueAhead(o) {
+    let a = 0;
+    for (const x of dirOf(o).get(o.price) || []) { if (x === o) break; a += x.rem; }
+    return a;
+  }
+
+  function submit(o) {
+    o.id = nextId++; o.rem = o.qty; o.ts = ++seq;
+    const oppName = o.side === 'buy' ? 'ask' : 'bid';
+    const opp = books[o.venue][oppName];
+    const fills = [];
+    while (o.rem > 0) {
+      const bp = best(o.venue, oppName);
+      if (bp === null) break;
+      if (o.type === 'limit' && (o.side === 'buy' ? bp > o.price : bp < o.price)) break;
+      const q = opp.get(bp), r = q[0];
+      const n = Math.min(r.rem, o.rem);
+      r.rem -= n; o.rem -= n;
+      fills.push({price: bp, qty: n});
+      st.last = bp; tradeN++;
+      tape.unshift({n: tradeN, venue: o.venue, price: bp, qty: n, side: o.side});
+      if (tape.length > 40) tape.pop();
+      const buyer = o.side === 'buy' ? o : r, seller = o.side === 'buy' ? r : o;
+      if (buyer.owner === YOU) { acc.pos += n; acc.cash -= bp * n; acc.bQty += n; acc.bCost += bp * n; }
+      if (seller.owner === YOU) { acc.pos -= n; acc.cash += bp * n; acc.sQty += n; acc.sCost += bp * n; }
+      if (o.owner === YOU) acc.taker += n;
+      if (r.owner === YOU) { acc.maker += n; if (r.side === 'buy') acc.makerBuy += n; else acc.makerSell += n; }
+      if (r.owner === YOU && o.owner !== YOU) {
+        log('fill', `<b>${VN(o.venue)}</b>: your ${r.side} order #${r.id} was hit for ${n} at ${P(bp)}${r.rem === 0 ? ' (fully filled)' : `, ${r.rem} still resting`}. You supplied liquidity: this is how a market maker earns the spread.`);
+      }
+      if (r.rem === 0) { q.shift(); orders.delete(r.id); if (!q.length) opp.delete(bp); }
+    }
+    let rested = false;
+    if (o.rem > 0 && o.type === 'limit') {
+      const m = dirOf(o);
+      if (!m.has(o.price)) m.set(o.price, []);
+      m.get(o.price).push(o); orders.set(o.id, o); rested = true;
+    }
+    return {o, fills, rested};
+  }
+  function cancel(id) {
+    const o = orders.get(id);
+    if (!o) return false;
+    const m = dirOf(o), q = m.get(o.price);
+    q.splice(q.indexOf(o), 1);
+    if (!q.length) m.delete(o.price);
+    orders.delete(id);
+    return true;
+  }
+  function dry(v, s, t, price, qty) {
+    const lv = levels(v, s === 'buy' ? 'ask' : 'bid');
+    let rem = qty, cost = 0, used = 0;
+    for (const l of lv) {
+      if (rem <= 0) break;
+      if (t === 'limit' && (s === 'buy' ? l.price > price : l.price < price)) break;
+      const n = Math.min(l.qty, rem);
+      rem -= n; cost += n * l.price; used++;
+    }
+    return {filled: qty - rem, rem, cost, used, bestOpp: lv.length ? lv[0].price : null};
+  }
+
+  /* ---------- Arbitrage ---------- */
+  function opportunity() {
+    let op = null;
+    for (const [bv, sv] of [['A', 'B'], ['B', 'A']]) {
+      const ba = best(bv, 'ask'), sb = best(sv, 'bid');
+      if (ba !== null && sb !== null && sb > ba) {
+        const edge = sb - ba, qty = Math.min(topQty(bv, 'ask'), topQty(sv, 'bid'));
+        if (!op || edge > op.edge) op = {buyV: bv, sellV: sv, buyPx: ba, sellPx: sb, edge, qty};
+      }
+    }
+    return op;
+  }
+  const vw = fills => {
+    const q = fills.reduce((a, f) => a + f.qty, 0), c = fills.reduce((a, f) => a + f.qty * f.price, 0);
+    return {q, avg: q ? c / q : 0};
+  };
+  function noteTaker(res) {
+    const o = res.o;
+    if (o.owner !== YOU || !res.fills.length) return;
+    const a = vw(res.fills), now = Date.now();
+    lastTaker[o.venue] = {side: o.side, avg: a.avg, q: a.q, t: now};
+    const other = lastTaker[o.venue === 'A' ? 'B' : 'A'];
+    if (other && now - other.t < 6000 && other.side !== o.side) {
+      const buy = o.side === 'buy' ? lastTaker[o.venue] : other, sell = o.side === 'sell' ? lastTaker[o.venue] : other;
+      if (sell.avg > buy.avg) {
+        arbProfit += (sell.avg - buy.avg) * Math.min(buy.q, sell.q); arbCount++;
+        complete('a1'); lastTaker = {};
+      }
+    }
+  }
+  function runArb(op, qty, owner, latency) {
+    const l1 = submit({venue: op.buyV, side: 'buy', type: 'limit', price: op.buyPx, qty, owner});
+    if (owner === YOU) noteTaker(l1);
+    const filled1 = l1.o.qty - l1.o.rem;
+    if (owner !== YOU) { if (filled1) submit({venue: op.sellV, side: 'sell', type: 'limit', price: op.sellPx, qty: filled1, owner}); return; }
+    if (!filled1) { log('warn', `Arbitrage failed: the ask on ${VN(op.buyV)} was gone before your buy arrived.`); return; }
+    const expected = filled1 * (op.sellPx - op.buyPx);
+    const finish = l2 => {
+      noteTaker(l2);
+      const a = vw(l1.fills), b = vw(l2.fills), m = Math.min(a.q, b.q);
+      const profit = Math.round(m * (b.avg - a.avg));
+      let t = `<b>Arbitrage:</b> bought ${a.q} on ${VN(op.buyV)} at ${P3(a.avg)} and sold ${b.q} on ${VN(op.sellV)} at ${P3(b.avg)}. Profit locked: <b>${SG(profit)}</b>.`;
+      if (latency) t += ` You expected ${SG(Math.round(expected))} when you sent the first leg. The market kept moving during the ${LATENCY} ms before the second leg: that is leg risk.`;
+      if (b.q < a.q) t += ` Only ${b.q} of the ${a.q} units were sold: you are left with ${a.q - b.q} unhedged.`;
+      log(profit >= 0 ? 'ok' : 'warn', t);
+      if (latency) complete('a2');
+      pendingArb = false; render();
+    };
+    if (!latency) {
+      finish(submit({venue: op.sellV, side: 'sell', type: 'limit', price: op.sellPx, qty: filled1, owner}));
+    } else {
+      pendingArb = true;
+      log('ok', `Leg 1 done: bought ${filled1} on ${VN(op.buyV)}. Sending leg 2 (market sell on ${VN(op.sellV)}) in ${LATENCY} ms...`);
+      timeouts.push(setTimeout(() => finish(submit({venue: op.sellV, side: 'sell', type: 'market', price: null, qty: filled1, owner})), LATENCY));
+    }
+  }
+
+  /* ---------- Bots ---------- */
+  function botEvent(v) {
+    const r = Math.random(), ref = refOf(v);
+    const s = Math.random() < .5 ? 'buy' : 'sell';
+    const mine = [...orders.values()].filter(o => o.owner === BOT && o.venue === v);
+    if (r < .48 && mine.length < 90) {
+      const g = geom(.45);
+      submit({venue: v, side: s, type: 'limit', price: Math.max(100, s === 'buy' ? ref - 1 - g : ref + 1 + g), qty: rq(), owner: BOT});
+    } else if (r < .60) {
+      submit({venue: v, side: s, type: 'market', qty: rq(10, 40), owner: BOT});
+    } else if (r < .64) {
+      submit({venue: v, side: s, type: 'market', qty: rq(80, 200), owner: BOT});
+    } else if (r < .70) {
+      const b = best(v, s === 'buy' ? 'ask' : 'bid');
+      if (b !== null) submit({venue: v, side: s, type: 'limit', price: b, qty: rq(10, 60), owner: BOT});
+    } else if (mine.length) {
+      cancel(mine[Math.floor(Math.random() * mine.length)].id);
+    }
+    for (const sd of ['buy', 'sell']) {
+      if (books[v][sd === 'buy' ? 'bid' : 'ask'].size < 4) {
+        const g = geom(.5);
+        submit({venue: v, side: sd, type: 'limit', price: Math.max(100, sd === 'buy' ? ref - 2 - g : ref + 2 + g), qty: rq(), owner: BOT});
+      }
+    }
+  }
+  function tick() {
+    fair += (10000 - fair) * 0.002 + (Math.random() < .08 ? (Math.random() < .5 ? -1 : 1) : 0);
+    for (const v of VEN) off[v] = 0.96 * off[v] + randn() * 0.45;
+    botEvent(Math.random() < .5 ? 'A' : 'B');
+    if (Math.random() < arbRate) {
+      const op = opportunity();
+      if (op) runArb(op, Math.min(op.qty, rq(10, 40)), BOT, false);
+    }
+    render();
+  }
+
+  /* ---------- Log and exercises ---------- */
+  function log(cls, html) { journal.unshift({cls, html}); if (journal.length > 40) journal.pop(); }
+  function complete(id) {
+    if (!done.has(id)) { done.add(id); log('ok', `Exercise complete: ${MISSIONS.find(m => m.id === id).t}.`); }
+  }
+  function realized() {
+    const m = Math.min(acc.bQty, acc.sQty);
+    return m ? Math.round(m * (acc.sCost / acc.sQty - acc.bCost / acc.bQty)) : 0;
+  }
+  function markMid() {
+    const ms = VEN.map(mid).filter(x => x !== null);
+    return ms.length ? ms.reduce((a, b) => a + b, 0) / ms.length : st.last;
+  }
+  function checkMissions() {
+    const mine = [...orders.values()].filter(o => o.owner === YOU);
+    for (const v of VEN) {
+      if (mine.some(o => o.venue === v && o.side === 'buy' && o.quote) && mine.some(o => o.venue === v && o.side === 'sell' && o.quote)) complete('mm1');
+    }
+    if (acc.makerBuy > 0 && acc.makerSell > 0 && realized() > 0) complete('mm2');
+    if (Math.abs(acc.pos) >= 100 && acc.maker > 0) complete('mm3');
+  }
+
+  function report(res, pre) {
+    const o = res.o, verb = o.side, where = VN(o.venue);
+    const filled = o.qty - o.rem;
+    const notional = res.fills.reduce((a, f) => a + f.price * f.qty, 0);
+    const avgRaw = filled ? notional / filled : 0;
+    const prices = new Set(res.fills.map(f => f.price));
+    const oppBest = o.side === 'buy' ? pre.ba : pre.bb;
+    if (o.type === 'market') {
+      if (!filled) { log('warn', `${where}: market ${verb} of ${o.qty} rejected, nobody is on the other side of the book.`); return; }
+      const slip = Math.abs(avgRaw - oppBest);
+      let t = `<b>${where}:</b> market ${verb} of ${o.qty}: ${filled} filled at an average of ${P3(avgRaw)} across ${prices.size} price ${plural(prices.size, 'level', 'levels')}. Best price at the start: ${P(oppBest)}, slippage ${P3(slip)} per unit.`;
+      if (o.rem) t += ` The book ran out; the remaining ${o.rem} are cancelled.`;
+      log('ok', t); return;
+    }
+    if (!filled) {
+      const ahead = queueAhead(o);
+      log('ok', `<b>${where}:</b> limit ${verb} of ${o.qty} at ${P(o.price)} does not cross the book${oppBest !== null ? ` (best price on the other side: ${P(oppBest)})` : ''}. It rests in the queue${ahead ? `, with ${ahead} ahead of you` : ', first in line at this price'}.`);
+      return;
+    }
+    let t = `<b>${where}:</b> limit ${verb} of ${o.qty} at ${P(o.price)}: ${filled} filled immediately at an average of ${P3(avgRaw)}. You took liquidity, so you trade at the resting orders' prices.`;
+    if (o.rem) t += ` The remaining ${o.rem} rest at ${P(o.price)}.`;
+    log('ok', t);
+  }
+
+  /* ---------- User actions ---------- */
+  function readTicket() {
+    return {qty: parseInt($('qty').value, 10), price: Math.round(parseFloat($('price').value) * 100)};
+  }
+  function placeUser() {
+    const {qty, price} = readTicket();
+    $('err').textContent = '';
+    if (!Number.isFinite(qty) || qty < 1) { $('err').textContent = 'Enter a whole quantity of at least 1.'; return; }
+    if (type === 'limit' && (!Number.isFinite(price) || price < 1)) { $('err').textContent = 'Enter a limit price, for example 100.05.'; return; }
+    const pre = {bb: best(venue, 'bid'), ba: best(venue, 'ask')};
+    const res = submit({venue, side, type, price: type === 'limit' ? price : null, qty, owner: YOU});
+    report(res, pre); noteTaker(res); render();
+  }
+  function cancelMine(id) {
+    const o = orders.get(id);
+    if (o && o.owner === YOU && cancel(id)) {
+      log('ok', `${VN(o.venue)}: order #${id} cancelled (${o.side} of ${o.rem} at ${P(o.price)}). You lose your place in the queue.`);
+      render();
+    }
+  }
+  function cancelOn(v) {
+    [...orders.values()].filter(o => o.owner === YOU && o.venue === v).forEach(o => cancel(o.id));
+  }
+  function quoteBoth() {
+    const v = $('mmV').value, h = Math.max(1, parseInt($('mmH').value, 10) || 1), q = parseInt($('mmQ').value, 10);
+    if (!Number.isFinite(q) || q < 1) { log('warn', 'Market maker: enter a size of at least 1 per side.'); render(); return; }
+    cancelOn(v);
+    const m = mid(v), c = m === null ? refOf(v) : Math.round(m);
+    const bidPx = c - h, askPx = c + h;
+    const rb = submit({venue: v, side: 'buy', type: 'limit', price: bidPx, qty: q, owner: YOU});
+    const ra = submit({venue: v, side: 'sell', type: 'limit', price: askPx, qty: q, owner: YOU});
+    if (rb.rested) rb.o.quote = true;
+    if (ra.rested) ra.o.quote = true;
+    log('ok', `<b>${VN(v)}:</b> quoted ${q} bid at ${P(bidPx)} and ${q} ask at ${P(askPx)} around the mid price ${P(c)}. If both fill, you keep ${P(askPx - bidPx)} per unit (the spread). If only one fills, you accumulate inventory and carry price risk.`);
+    render();
+  }
+  function takeArb() {
+    if (pendingArb) return;
+    const op = opportunity();
+    if (!op) { log('warn', 'No arbitrage left: another trader got there first. That is why speed matters.'); render(); return; }
+    const want = parseInt($('arbQ').value, 10);
+    if (!Number.isFinite(want) || want < 1) { log('warn', 'Arbitrage: enter a size of at least 1.'); render(); return; }
+    runArb(op, Math.min(want, op.qty), YOU, $('arbLat').checked);
+    render();
+  }
+
+  /* ---------- Interface ---------- */
+  function setVenue(v, auto) {
+    venue = v;
+    document.querySelectorAll('.seg.ven button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+    if (auto) suggestPrice();
+    preview();
+  }
+  function suggestPrice() {
+    const p = best(venue, side === 'sell' ? 'ask' : 'bid');
+    if (p !== null) $('price').value = (p / 100).toFixed(2);
+  }
+  function setSide(s, auto) {
+    side = s;
+    document.querySelectorAll('.seg.side button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === s)));
+    const btn = $('send'); btn.className = 'submit ' + s;
+    btn.textContent = s === 'buy' ? 'Send buy order' : 'Send sell order';
+    if (auto) suggestPrice();
+    preview();
+  }
+  function setType(t) {
+    type = t;
+    document.querySelectorAll('.seg.type button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === t)));
+    $('price').disabled = t === 'market';
+    preview();
+  }
+
+  function flatten() {
+    const q = Math.abs(acc.pos);
+    if (!q) { log('warn', 'You have no position to close.'); render(); return; }
+    VEN.forEach(cancelOn);
+    const v = venue, s = acc.pos > 0 ? 'sell' : 'buy';
+    const pre = {bb: best(v, 'bid'), ba: best(v, 'ask')};
+    const res = submit({venue: v, side: s, type: 'market', price: null, qty: q, owner: YOU});
+    report(res, pre);
+    log(acc.pos === 0 ? 'ok' : 'warn', acc.pos === 0 ? 'Position closed. Your result is now fully realized.' : `Position only partly closed: ${acc.pos} left (the book ran out). To close the rest, pick the other exchange in the ticket and press the button again.`);
+    render();
+  }
+  function renderFlat() {
+    const b = $('flat'); b.disabled = acc.pos === 0;
+    b.textContent = acc.pos ? `Close position (${acc.pos > 0 ? 'sell' : 'buy'} ${Math.abs(acc.pos)} at market on Exchange ${venue})` : 'No position to close';
+  }
+  function preview() {
+    renderFlat();
+    const {qty, price} = readTicket();
+    const el = $('preview'), where = VN(venue);
+    if (!Number.isFinite(qty) || qty < 1) { el.textContent = 'Enter a quantity to see what would happen.'; return; }
+    const verb = side;
+    if (type === 'market') {
+      const d = dry(venue, side, 'market', null, qty);
+      if (!d.filled) { el.textContent = `Nobody is on the other side of ${where}: a market order would be rejected.`; return; }
+      el.innerHTML = `On <b>${where}</b>, you want to ${verb} <b>${qty}</b> right now. Estimate: average price <b class="mono">${P3(d.cost / d.filled)}</b> across ${d.used} ${plural(d.used, 'level', 'levels')}, versus a best price of <span class="mono">${P(d.bestOpp)}</span>.${d.rem ? ` The book is ${d.rem} short.` : ''}`;
+      return;
+    }
+    if (!Number.isFinite(price) || price < 1) { el.textContent = 'Enter a limit price to see whether the order crosses the book.'; return; }
+    const d = dry(venue, side, 'limit', price, qty);
+    if (d.filled) {
+      el.innerHTML = `On <b>${where}</b>, <b>this price crosses the book</b>: ${d.filled} filled immediately at an average of <b class="mono">${P3(d.cost / d.filled)}</b>.${d.rem ? ` The remaining ${d.rem} will rest at ${P(price)}.` : ''} <br>To rest in the book instead, use a price ${side === 'buy' ? 'below' : 'above'} <span class="mono">${P(d.bestOpp)}</span>.`;
+    } else {
+      const same = (books[venue][side === 'buy' ? 'bid' : 'ask'].get(price) || []).reduce((a, o) => a + o.rem, 0);
+      el.innerHTML = `On <b>${where}</b>, <b>this price does not cross the book</b>: the order will rest at <span class="mono">${P(price)}</span>. ${same ? `<b>${same}</b> already wait at this price: you will queue behind them.` : 'Nobody waits at this price: you will be first in the queue.'}`;
+    }
+  }
+
+  const rows = {A: {a: [], b: []}, B: {a: [], b: []}};
+  function mkRow(cls) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'lv ' + cls;
+    b.innerHTML = '<i class="bar"></i><span class="mine"></span><span class="px"></span><span class="q"></span><span class="n"></span>';
+    return b;
+  }
+  function buildLadders() {
+    for (const v of VEN) {
+      const root = $('v' + v), A = root.querySelector('.asks'), B = root.querySelector('.bids');
+      A.replaceChildren(); B.replaceChildren(); rows[v].a = []; rows[v].b = [];
+      for (let i = 0; i < N; i++) { const r = mkRow('ask'); rows[v].a.push(r); A.appendChild(r); }
+      for (let i = 0; i < N; i++) { const r = mkRow('bid'); rows[v].b.push(r); B.appendChild(r); }
+    }
+  }
+  function fillRow(row, p, l, mx, hi) {
+    row.dataset.price = p;
+    row.querySelector('.px').textContent = P(p);
+    row.querySelector('.q').textContent = l ? l.qty : '';
+    row.querySelector('.n').textContent = l ? l.n : '';
+    const mh = l && l.mine ? `${l.mine}<span class="x" role="button" title="Cancel my orders at this price" aria-label="Cancel my orders at this price">✕</span>` : '';
+    const mc = row.querySelector('.mine');
+    if (mc._h !== mh) { mc.innerHTML = mh; mc._h = mh; }
+    row.querySelector('.bar').style.width = l ? (l.qty / mx * 62) + '%' : '0';
+    row.classList.toggle('empty', !l);
+    row.classList.toggle('arbhi', !!hi);
+    row.title = 'Use ' + P(p) + ' as your limit price';
+  }
+  function renderLadder(v, op) {
+    const bb = best(v, 'bid'), ba = best(v, 'ask'), ref = refOf(v);
+    const A = new Map(levels(v, 'ask').map(l => [l.price, l])), B = new Map(levels(v, 'bid').map(l => [l.price, l]));
+    const a0 = ba !== null ? ba : ref + 1, b0 = bb !== null ? bb : ref - 1;
+    let mx = 1;
+    for (let i = 0; i < N; i++) mx = Math.max(mx, (A.get(a0 + i) || {qty: 0}).qty, (B.get(b0 - i) || {qty: 0}).qty);
+    rows[v].a.forEach((r, j) => { const p = a0 + (N - 1 - j); fillRow(r, p, A.get(p), mx, op && op.buyV === v && p === op.buyPx); });
+    rows[v].b.forEach((r, j) => { const p = b0 - j; fillRow(r, p, B.get(p), mx, op && op.sellV === v && p === op.sellPx); });
+    const hid = [...orders.values()].filter(o => o.owner === YOU && o.venue === v && (o.side === 'sell' ? o.price > a0 + N - 1 : o.price < b0 - N + 1));
+    const ov = $('v' + v).querySelector('.offview');
+    ov.hidden = !hid.length;
+    ov.textContent = hid.length ? 'Your orders outside this view: ' + hid.map(o => `${o.side} ${o.rem} at ${P(o.price)}`).join(', ') + '.' : '';
+    const sp = bb !== null && ba !== null ? ba - bb : null;
+    $('v' + v).querySelector('.spread').innerHTML = sp === null
+      ? '<span>One side of this book is empty.</span>'
+      : `<span>Spread <b>${sp}</b> ${plural(sp, 'tick', 'ticks')} ($${P(sp)})</span><span>Mid <b>${P(Math.round((bb + ba) / 2))}</b></span>`;
+  }
+  function renderArb(op) {
+    const box = $('arb');
+    box.classList.toggle('on', !!op);
+    const bA = best('A', 'bid'), aA = best('A', 'ask'), bB = best('B', 'bid'), aB = best('B', 'ask');
+    const g1 = bB !== null && aA !== null ? bB - aA : null, g2 = bA !== null && aB !== null ? bA - aB : null;
+    const f = g => g === null ? 'n/a' : (g > 0 ? '+' : '') + P(g);
+    if (op) {
+      $('arbTxt').innerHTML = `<b>Arbitrage opportunity.</b> Buy on ${VN(op.buyV)} at <span class="mono">${P(op.buyPx)}</span> and sell on ${VN(op.sellV)} at <span class="mono">${P(op.sellPx)}</span>: edge <b class="mono">+${P(op.edge)}</b> per unit, up to <b>${op.qty}</b> units (about ${E(op.edge * op.qty)}).<span class="sub">The two highlighted rows are the prices to hit. Other traders can see it too, so it may vanish within seconds.</span>`;
+    } else {
+      $('arbTxt').innerHTML = `<b>No arbitrage right now.</b> Gap bid B vs ask A: <span class="mono">${f(g1)}</span>. Gap bid A vs ask B: <span class="mono">${f(g2)}</span>.<span class="sub">An arbitrage needs a positive gap: one exchange's best bid above the other's best ask.</span>`;
+    }
+    $('arbGo').disabled = !op || pendingArb;
+    $('arbGo').textContent = pendingArb ? 'Leg 2 in flight...' : 'Take arbitrage';
+  }
+  function renderMine() {
+    const mine = [...orders.values()].filter(o => o.owner === YOU).sort((a, b) => a.ts - b.ts);
+    $('mineN').textContent = mine.length ? '(' + mine.length + ')' : '';
+    $('mine').innerHTML = mine.length ? mine.map(o => `<div class="mo"><span class="vtag ${o.venue}">${o.venue}</span><span class="s ${o.side}">${o.side === 'buy' ? 'Buy' : 'Sell'}</span><span class="mono">${o.rem}${o.rem < o.qty ? ' / ' + o.qty : ''} at ${P(o.price)}</span><button type="button" data-cancel="${o.id}" aria-label="Cancel order ${o.id}">Cancel</button><span class="ahead">ahead of you: ${queueAhead(o)}</span></div>`).join('')
+      : '<p class="empty-note">No resting orders. Quote both sides with the market-maker toolkit, or place a limit order that does not cross the book.</p>';
+  }
+  function setStat(id, c, signed) {
+    const el = $(id); el.textContent = signed ? SG(c) : E(c);
+    el.className = c > 0 ? 'pos' : c < 0 ? 'neg' : '';
+  }
+  function renderStats() {
+    $('sPos').textContent = (acc.pos > 0 ? '+' : '') + acc.pos;
+    const total = Math.round(acc.cash + acc.pos * markMid()), re = realized();
+    setStat('sTot', total, true); setStat('sReal', re, true); setStat('sInv', total - re, true);
+    setStat('sArb', Math.round(arbProfit), true);
+    $('sMT').textContent = `${acc.maker} / ${acc.taker}`;
+  }
+  function renderMissions() {
+    $('missions').innerHTML = MISSIONS.map(m => `<li class="${done.has(m.id) ? 'done' : ''}"><span class="ck" aria-hidden="true">✓</span><div><b><span class="tag">${m.k}</span>${m.t}</b><span class="d">${m.d}</span></div></li>`).join('');
+    $('misCount').textContent = `${done.size} / ${MISSIONS.length}`;
+  }
+  function render() {
+    checkMissions();
+    const op = opportunity();
+    renderStats(); renderArb(op); VEN.forEach(v => renderLadder(v, op)); renderMine(); renderMissions(); preview();
+    $('log').innerHTML = journal.length ? journal.map(j => `<div class="${j.cls}">${j.html}</div>`).join('') : '<div>Your orders and their fills are explained here.</div>';
+    $('tape').innerHTML = tape.slice(0, 14).map(t => `<div class="tp ${t.side}"><span class="t">${t.n}</span><span class="t">${t.venue}</span><span class="p">${P(t.price)}</span><span>${t.qty}</span></div>`).join('');
+  }
+
+  /* ---------- Start-up ---------- */
+  function init() {
+    timeouts.forEach(clearTimeout); timeouts = [];
+    books = {A: {bid: new Map(), ask: new Map()}, B: {bid: new Map(), ask: new Map()}};
+    orders = new Map(); seq = 0; nextId = 1; tradeN = 0; pendingArb = false;
+    st = {last: 10000}; journal = []; tape = []; done = new Set(); lastTaker = {}; arbProfit = 0; arbCount = 0;
+    acc = {cash: 0, pos: 0, bQty: 0, bCost: 0, sQty: 0, sCost: 0, maker: 0, taker: 0, makerBuy: 0, makerSell: 0};
+    fair = 10000; off = {A: 0, B: 0};
+    for (const v of VEN) {
+      for (let k = 0; k < 10; k++) {
+        for (let i = 0, n = 1 + Math.floor(Math.random() * 3); i < n; i++) {
+          submit({venue: v, side: 'buy', type: 'limit', price: 9999 - k, qty: rq(), owner: BOT});
+          submit({venue: v, side: 'sell', type: 'limit', price: 10001 + k, qty: rq(), owner: BOT});
+        }
+      }
+    }
+    $('price').value = '99.98'; setVenue('A'); setSide('buy'); setType('limit');
+    buildLadders(); render();
+  }
+  function schedule() {
+    clearInterval(timer);
+    if (!paused) timer = setInterval(tick, 1000 / Number($('speed').value));
+  }
+
+  document.querySelectorAll('.seg.ven button').forEach(b => b.addEventListener('click', () => setVenue(b.dataset.v, true)));
+  document.querySelectorAll('.seg.side button').forEach(b => b.addEventListener('click', () => setSide(b.dataset.v, true)));
+  document.querySelectorAll('.seg.type button').forEach(b => b.addEventListener('click', () => setType(b.dataset.v)));
+  ['price', 'qty'].forEach(id => $(id).addEventListener('input', preview));
+  $('ticket').addEventListener('submit', e => { e.preventDefault(); placeUser(); });
+  $('flat').addEventListener('click', flatten);
+  const rowClick = e => {
+    const row = e.target.closest('.lv'); if (!row) return;
+    const v = row.closest('.venue').dataset.v;
+    if (e.target.closest('.x')) {
+      const p = Number(row.dataset.price), sd = row.classList.contains('ask') ? 'sell' : 'buy';
+      [...orders.values()].filter(o => o.owner === YOU && o.venue === v && o.price === p && o.side === sd).forEach(o => cancelMine(o.id));
+      return;
+    }
+    $('price').value = (Number(row.dataset.price) / 100).toFixed(2);
+    setType('limit'); setVenue(v);
+  };
+  document.querySelectorAll('.venue').forEach(el => el.addEventListener('click', rowClick));
+  const cancelClick = e => { const b = e.target.closest('[data-cancel]'); if (b) cancelMine(Number(b.dataset.cancel)); };
+  $('mine').addEventListener('pointerdown', cancelClick);
+  $('mine').addEventListener('click', e => { if (e.detail === 0) cancelClick(e); });
+  $('cancelAll').addEventListener('click', () => { [...orders.values()].filter(o => o.owner === YOU).forEach(o => cancelMine(o.id)); });
+  $('mmGo').addEventListener('click', quoteBoth);
+  $('mmCancel').addEventListener('click', () => { const v = $('mmV').value; cancelOn(v); log('ok', `${VN(v)}: all your resting orders were pulled.`); render(); });
+  $('arbGo').addEventListener('click', takeArb);
+  $('arbBots').addEventListener('change', () => { arbRate = Number($('arbBots').value); });
+  $('pause').addEventListener('click', () => { paused = !paused; $('pause').textContent = paused ? 'Resume market' : 'Pause market'; schedule(); });
+  $('step').addEventListener('click', tick);
+  $('speed').addEventListener('input', schedule);
+  $('reset').addEventListener('click', () => { init(); schedule(); });
+
+  init(); schedule();
+})();
+</script>
+</body>
+</html>
